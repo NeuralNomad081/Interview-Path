@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
+from fastapi.middleware.cors import CORSMiddleware
 import database
 import schemas
 import models
@@ -27,6 +28,14 @@ app = FastAPI(
     title="Interview-Path API",
     description="The backend for the Interview-Path application.",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
@@ -101,6 +110,44 @@ def start_interview_session(
 
     return new_session
 
+class NextQuestionRequest(BaseModel):
+    topic: str
+    difficulty: str = "medium"
+
+@app.post("/interview/next/{session_id}")
+def generate_next_question(
+    session_id: uuid.UUID,
+    request: NextQuestionRequest,
+    db: Session = Depends(database.SessionLocal),
+    token: str = Depends(oauth2_scheme)
+):
+    current_user = auth.decode_access_token(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    session = db.query(models.InterviewSession).filter(models.InterviewSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Interview session not found")
+
+    question_text = interview.generate_interview_question(request.topic, request.difficulty)
+    audio_file_path = f"audio/{uuid.uuid4()}.mp3"
+    tts.text_to_speech(question_text, audio_file_path)
+
+    new_round = models.InterviewRound(
+        session_id=session.id,
+        question=question_text,
+        question_audio_recording=audio_file_path,
+        user_video_recording="",
+        transcript="",
+        sentiment_analysis={},
+        facial_expression_analysis={},
+    )
+    db.add(new_round)
+    db.commit()
+    db.refresh(new_round)
+
+    return new_round
+
 @app.post("/interview/answer/audio/{round_id}")
 async def answer_question_audio(
     round_id: uuid.UUID,
@@ -164,6 +211,47 @@ def get_question_audio(round_id: uuid.UUID, db: Session = Depends(database.Sessi
 @app.get("/interview/report/{session_id}")
 def get_report(session_id: uuid.UUID, db: Session = Depends(database.SessionLocal)):
     return report.generate_report(session_id, db)
+
+@app.get("/interview/sessions")
+def get_user_sessions(
+    db: Session = Depends(database.SessionLocal),
+    token: str = Depends(oauth2_scheme)
+):
+    current_user = auth.decode_access_token(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    user = db.query(models.User).filter(models.User.email == current_user).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    sessions = db.query(models.InterviewSession).filter(models.InterviewSession.user_id == user.id).order_by(models.InterviewSession.session_date.desc()).all()
+    # Simple mapping to match the frontend expectations
+    result = []
+    for session in sessions:
+        # derive some stats or mock it if empty
+        completed_rounds = len(session.rounds)
+        status = 'completed' if session.report else 'in-progress'
+        
+        # let's find a topic to show
+        topic = "General"
+        if completed_rounds > 0 and session.rounds[0].question:
+            topic = "Custom Interview"
+
+        result.append({
+            "id": str(session.id),
+            "date": session.session_date.isoformat(),
+            "status": status,
+            "role": topic,
+            "duration": completed_rounds * 5,
+            "score": 8.0 if session.report else None, # Real scoring could be implemented later
+            "type": "mixed",
+            "company": "Practice",
+            "companyLogo": "🤖",
+            "techStack": []
+        })
+
+    return result
 
 @app.get("/")
 def read_root():

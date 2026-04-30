@@ -1,31 +1,57 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Award, TrendingUp, AlertCircle, CheckCircle, Star } from 'lucide-react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import Button from '../../components/UI/Button';
-import { FeedbackMetrics } from '../../types';
+import { useAuth } from '../../hooks/useAuth';
+
+interface FeedbackMetrics {
+  overallScore: number;
+  communication: number;
+  problemSolving: number;
+  confidence: number;
+  technicalKnowledge: number;
+  areasForImprovement: string[];
+  strengths: string[];
+  detailedAnalysis?: {
+    communication: string;
+    technical: string;
+    confidence: string;
+    overall: string;
+  }
+}
 
 interface FeedbackPageProps {
-  onBack: () => void;
+  onBack?: () => void;
 }
 
 const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
-  const mockFeedback: FeedbackMetrics = {
-    overallScore: 8.5,
-    communication: 9,
-    problemSolving: 8,
-    confidence: 7,
-    technicalKnowledge: 9,
-    areasForImprovement: [
-      'Work on explaining complex concepts more clearly',
-      'Pause more to think before answering technical questions',
-      'Practice discussing project challenges in more detail'
-    ],
-    strengths: [
-      'Excellent technical knowledge and implementation skills',
-      'Clear communication and well-structured responses',
-      'Good understanding of best practices',
-      'Confident delivery and professional demeanor'
-    ]
-  };
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { token } = useAuth();
+  
+  const [loading, setLoading] = useState(true);
+  const [feedback, setFeedback] = useState<FeedbackMetrics | null>(null);
+
+  useEffect(() => {
+    const fetchReport = async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/interview/report/${id}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Failed to fetch interview report');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        setFeedback(data);
+      } catch (err: any) {
+        toast.error(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    if (id) fetchReport();
+  }, [id, token]);
 
   const ScoreCircle = ({ score, label }: { score: number; label: string }) => {
     const percentage = (score / 10) * 100;
@@ -65,13 +91,34 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
     );
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-white text-xl animate-pulse flex items-center space-x-3">
+          <Award className="w-8 h-8 text-blue-500 animate-spin" />
+          <span>Generating AI Feedback Report...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!feedback) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center space-y-4">
+        <AlertCircle className="text-red-500 w-16 h-16" />
+        <span className="text-white text-xl">Could not load feedback report.</span>
+        <Button variant="primary" onClick={() => navigate('/dashboard')}>Return to Dashboard</Button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-900">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <button
-            onClick={onBack}
+            onClick={() => { if (onBack) onBack(); else navigate('/dashboard'); }}
             className="flex items-center text-gray-400 hover:text-white transition-colors"
           >
             <ArrowLeft className="w-5 h-5 mr-2" />
@@ -80,7 +127,7 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
           
           <div className="text-right">
             <div className="text-sm text-gray-400">Interview Completed</div>
-            <div className="text-white font-medium">January 15, 2024</div>
+            <div className="text-white font-medium">{new Date().toLocaleDateString()}</div>
           </div>
         </div>
 
@@ -90,8 +137,8 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
             <Award className="w-8 h-8 text-white mr-3" />
             <h1 className="text-3xl font-bold text-white">Interview Complete!</h1>
           </div>
-          <div className="text-6xl font-bold text-white mb-2">{mockFeedback.overallScore}/10</div>
-          <p className="text-green-100 text-lg">Excellent Performance</p>
+          <div className="text-6xl font-bold text-white mb-2">{feedback.overallScore}/10</div>
+          <p className="text-green-100 text-lg">Detailed Evaluation Generated</p>
         </div>
 
         {/* Detailed Metrics */}
@@ -103,10 +150,10 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
             </h2>
             
             <div className="grid grid-cols-2 gap-6">
-              <ScoreCircle score={mockFeedback.communication} label="Communication" />
-              <ScoreCircle score={mockFeedback.problemSolving} label="Problem Solving" />
-              <ScoreCircle score={mockFeedback.confidence} label="Confidence" />
-              <ScoreCircle score={mockFeedback.technicalKnowledge} label="Technical Knowledge" />
+              <ScoreCircle score={feedback.communication} label="Communication" />
+              <ScoreCircle score={feedback.problemSolving} label="Problem Solving" />
+              <ScoreCircle score={feedback.confidence} label="Confidence" />
+              <ScoreCircle score={feedback.technicalKnowledge} label="Technical Knowledge" />
             </div>
           </div>
 
@@ -118,7 +165,7 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
                 Strengths
               </h3>
               <div className="space-y-3">
-                {mockFeedback.strengths.map((strength, index) => (
+                {feedback.strengths?.map((strength, index) => (
                   <div key={index} className="flex items-start space-x-3">
                     <Star className="w-4 h-4 text-green-400 mt-1 flex-shrink-0" />
                     <span className="text-gray-300 text-sm">{strength}</span>
@@ -134,7 +181,7 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
                 Areas for Improvement
               </h3>
               <div className="space-y-3">
-                {mockFeedback.areasForImprovement.map((area, index) => (
+                {feedback.areasForImprovement?.map((area, index) => (
                   <div key={index} className="flex items-start space-x-3">
                     <div className="w-2 h-2 bg-yellow-400 rounded-full mt-2 flex-shrink-0" />
                     <span className="text-gray-300 text-sm">{area}</span>
@@ -152,25 +199,25 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
             <div>
               <h4 className="text-white font-medium mb-2">Communication Skills</h4>
               <p className="text-gray-400 text-sm mb-4">
-                You demonstrated excellent verbal communication throughout the interview. Your responses were well-structured and easy to follow. Consider working on more concise explanations for complex technical concepts.
+                {feedback.detailedAnalysis?.communication || 'Communication evaluation recorded.'}
               </p>
             </div>
             <div>
               <h4 className="text-white font-medium mb-2">Technical Competency</h4>
               <p className="text-gray-400 text-sm mb-4">
-                Strong technical foundation with good understanding of React and modern JavaScript. Your problem-solving approach was logical and methodical. Great job explaining your thought process.
+                {feedback.detailedAnalysis?.technical || 'Technical analysis completed based on candidate transcript.'}
               </p>
             </div>
             <div>
               <h4 className="text-white font-medium mb-2">Confidence & Presence</h4>
               <p className="text-gray-400 text-sm mb-4">
-                You maintained good eye contact and spoke clearly. There were moments of hesitation during complex questions - practicing out loud can help build confidence for these situations.
+                {feedback.detailedAnalysis?.confidence || 'Confidence level perceived as satisfactory.'}
               </p>
             </div>
             <div>
               <h4 className="text-white font-medium mb-2">Overall Impression</h4>
               <p className="text-gray-400 text-sm mb-4">
-                Very strong performance overall. You would be a competitive candidate for most senior frontend positions. Focus on the improvement areas to reach the next level.
+                {feedback.detailedAnalysis?.overall || 'Good overall impression.'}
               </p>
             </div>
           </div>
@@ -178,13 +225,13 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
 
         {/* Action Items */}
         <div className="flex flex-col sm:flex-row gap-4">
-          <Button variant="primary" size="lg" className="flex-1">
+          <Button variant="primary" size="lg" className="flex-1" onClick={() => navigate('/create')}>
             Schedule Another Interview
           </Button>
-          <Button variant="outline" size="lg" className="flex-1">
+          <Button variant="outline" size="lg" className="flex-1" onClick={() => window.print()}>
             Download Full Report
           </Button>
-          <Button variant="ghost" size="lg" onClick={onBack}>
+          <Button variant="ghost" size="lg" onClick={() => { if (onBack) onBack(); else navigate('/dashboard'); }}>
             Return to Dashboard
           </Button>
         </div>

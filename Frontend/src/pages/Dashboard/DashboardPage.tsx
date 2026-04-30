@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { PlusCircle, TrendingUp, Clock, Award, ChevronRight } from 'lucide-react';
 import Button from '../../components/UI/Button';
 import InterviewCard from '../../components/Cards/InterviewCard';
 import { Interview } from '../../types';
-import { mockInterviews } from '../../data/mockData';
+import { useAuth } from '../../hooks/useAuth';
+import { toast } from 'sonner';
 
 interface DashboardPageProps {
   onCreateInterview: () => void;
@@ -11,9 +12,37 @@ interface DashboardPageProps {
 }
 
 const DashboardPage: React.FC<DashboardPageProps> = ({ onCreateInterview, onViewInterview }) => {
-  const completedInterviews = mockInterviews.filter(i => i.status === 'completed');
-  const averageScore = completedInterviews.reduce((acc, i) => acc + (i.score || 0), 0) / completedInterviews.length;
-  const totalHours = mockInterviews.reduce((acc, i) => acc + i.duration, 0) / 60;
+  const { token } = useAuth();
+  const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchSessions = async () => {
+      try {
+        const res = await fetch('http://localhost:8000/interview/sessions', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Failed to load sessions');
+        const data = await res.json();
+        setInterviews(data);
+      } catch (err: any) {
+        toast.error(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (token) fetchSessions();
+  }, [token]);
+
+  const completedInterviews = interviews.filter(i => i.status === 'completed');
+  const averageScore = completedInterviews.length > 0 
+    ? completedInterviews.reduce((acc, i) => acc + (i.score || 0), 0) / completedInterviews.length 
+    : 0;
+  const totalHours = interviews.reduce((acc, i) => acc + (i.duration || 0), 0) / 60;
+
+  if (loading) {
+    return <div className="text-white text-center py-20">Loading your dashboard...</div>;
+  }
 
   return (
     <div className="min-h-screen bg-gray-900">
@@ -30,7 +59,7 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onCreateInterview, onView
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-400 text-sm font-medium">Total Interviews</p>
-                <p className="text-2xl font-bold text-white mt-1">{mockInterviews.length}</p>
+                <p className="text-2xl font-bold text-white mt-1">{interviews.length}</p>
               </div>
               <div className="bg-blue-500/20 p-3 rounded-lg">
                 <Clock className="w-6 h-6 text-blue-400" />
@@ -88,15 +117,21 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onCreateInterview, onView
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {mockInterviews.map((interview) => (
-              <InterviewCard
-                key={interview.id}
-                interview={interview}
-                onClick={() => onViewInterview(interview)}
-              />
-            ))}
-          </div>
+          {interviews.length === 0 ? (
+            <div className="text-center py-10 bg-gray-800 rounded-xl border border-gray-700">
+              <p className="text-gray-400 mb-4">You haven't completed any interviews yet.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {interviews.map((interview) => (
+                <InterviewCard
+                  key={interview.id}
+                  interview={interview}
+                  onClick={() => onViewInterview(interview)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
