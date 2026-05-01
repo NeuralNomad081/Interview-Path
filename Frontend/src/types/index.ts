@@ -26,6 +26,17 @@ export interface InterviewConfig {
   technologies: string[];
 }
 
+export interface QuestionBreakdown {
+  questionNumber: number;
+  question: string;
+  expectedAnswer: string;
+  userAnswer: string;
+  score: number;
+  whatWasRight: string[];
+  whatWasWrong: string[];
+  feedback: string;
+}
+
 export interface FeedbackMetrics {
   overallScore: number;
   communication: number;
@@ -34,4 +45,11 @@ export interface FeedbackMetrics {
   technicalKnowledge: number;
   areasForImprovement: string[];
   strengths: string[];
+  detailedAnalysis?: {
+    communication: string;
+    technical: string;
+    confidence: string;
+    overall: string;
+  };
+  questionBreakdown?: QuestionBreakdown[];
 }

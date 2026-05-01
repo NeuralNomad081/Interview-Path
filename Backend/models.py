@@ -60,6 +60,7 @@ class InterviewRound(Base):
     question_audio_recording = Column(String)
     user_video_recording = Column(String)
     transcript = Column(String, default="")
+    expected_answer = Column(String, default="")
     sentiment_analysis = Column(JSON, default=dict)
     facial_expression_analysis = Column(JSON, default=dict)
 

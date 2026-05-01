@@ -115,6 +115,9 @@ def read_root():
 
 class InterviewRequest(BaseModel):
     topic: str
+    interview_type: str = "mixed"
+    difficulty: str = "medium"
+    technologies: list = []
 
 
 @app.post("/interview/start", response_model=schemas.InterviewSession)
@@ -128,7 +131,16 @@ def start_interview_session(
     db.commit()
     db.refresh(new_session)
 
-    question_text = interview.generate_interview_question(request.topic)
+    result = interview.generate_interview_question(
+        topic=request.topic,
+        difficulty=request.difficulty,
+        interview_type=request.interview_type,
+        technologies=request.technologies,
+        previous_questions=[],
+    )
+    question_text = result["question"]
+    expected_answer = result["expected_answer"]
+
     audio_file_path = f"audio/{uuid.uuid4()}.mp3"
     saved_audio_path = tts.text_to_speech(question_text, audio_file_path)
 
@@ -138,6 +150,7 @@ def start_interview_session(
         question_audio_recording=saved_audio_path,
         user_video_recording="",
         transcript="",
+        expected_answer=expected_answer,
         sentiment_analysis={},
         facial_expression_analysis={},
     )
@@ -172,6 +185,8 @@ def end_interview_session(
 class NextQuestionRequest(BaseModel):
     topic: str
     difficulty: str = "medium"
+    interview_type: str = "mixed"
+    technologies: list = []
 
 
 @app.post("/interview/next/{session_id}")
@@ -189,7 +204,18 @@ def generate_next_question(
     if str(session.user_id) != str(current_user.id):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    question_text = interview.generate_interview_question(request.topic, request.difficulty)
+    previous_questions = [r.question for r in session.rounds if r.question]
+
+    result = interview.generate_interview_question(
+        topic=request.topic,
+        difficulty=request.difficulty,
+        interview_type=request.interview_type,
+        technologies=request.technologies,
+        previous_questions=previous_questions,
+    )
+    question_text = result["question"]
+    expected_answer = result["expected_answer"]
+
     audio_file_path = f"audio/{uuid.uuid4()}.mp3"
     saved_audio_path = tts.text_to_speech(question_text, audio_file_path)
 
@@ -199,6 +225,7 @@ def generate_next_question(
         question_audio_recording=saved_audio_path,
         user_video_recording="",
         transcript="",
+        expected_answer=expected_answer,
         sentiment_analysis={},
         facial_expression_analysis={},
     )

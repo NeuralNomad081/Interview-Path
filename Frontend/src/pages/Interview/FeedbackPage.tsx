@@ -1,11 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowLeft, Award, TrendingUp, AlertCircle, CheckCircle, Star, Download, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Award, TrendingUp, AlertCircle, CheckCircle, Star, Download, RotateCcw, ChevronDown, ChevronUp, XCircle } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import Button from '../../components/UI/Button';
 import { useAuth } from '../../hooks/useAuth';
 import { apiUrl, authHeader } from '../../lib/api';
+
+interface QuestionBreakdown {
+  questionNumber: number;
+  question: string;
+  expectedAnswer: string;
+  userAnswer: string;
+  score: number;
+  whatWasRight: string[];
+  whatWasWrong: string[];
+  feedback: string;
+}
 
 interface FeedbackMetrics {
   overallScore: number;
@@ -20,7 +31,8 @@ interface FeedbackMetrics {
     technical: string;
     confidence: string;
     overall: string;
-  }
+  };
+  questionBreakdown?: QuestionBreakdown[];
 }
 
 interface FeedbackPageProps {
@@ -97,6 +109,100 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
           </div>
         </div>
         <span className="text-surface-400 text-sm text-center">{label}</span>
+      </motion.div>
+    );
+  };
+
+  const QuestionCard = ({ item, index }: { item: QuestionBreakdown; index: number }) => {
+    const [expanded, setExpanded] = useState(false);
+    const scoreColor = item.score >= 8 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+      : item.score >= 6 ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+      : 'text-red-400 bg-red-500/10 border-red-500/20';
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: index * 0.08 }}
+        className="glass-card p-6"
+      >
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            <span className="text-xs font-semibold text-surface-500 bg-white/5 border border-white/10 rounded-lg px-2 py-1 mt-0.5 flex-shrink-0">
+              Q{item.questionNumber}
+            </span>
+            <p className="text-white font-medium text-sm leading-relaxed">{item.question}</p>
+          </div>
+          <span className={`text-sm font-bold border rounded-lg px-2.5 py-1 flex-shrink-0 ${scoreColor}`}>
+            {item.score}/10
+          </span>
+        </div>
+
+        {/* User answer */}
+        <div className="mb-4">
+          <p className="text-xs text-surface-500 font-medium mb-1.5 uppercase tracking-wider">Your answer</p>
+          <p className="text-surface-300 text-sm leading-relaxed bg-white/5 rounded-xl p-3 border border-white/5">
+            {item.userAnswer || 'No answer provided'}
+          </p>
+        </div>
+
+        {/* Expected answer — collapsible */}
+        {item.expectedAnswer && (
+          <div className="mb-4">
+            <button
+              onClick={() => setExpanded(v => !v)}
+              className="flex items-center gap-2 text-xs font-medium text-amber-400 hover:text-amber-300 transition-colors mb-1.5"
+            >
+              {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              {expanded ? 'Hide' : 'Show'} expected answer
+            </button>
+            {expanded && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="text-amber-200/80 text-sm leading-relaxed bg-amber-500/5 rounded-xl p-3 border border-amber-500/15"
+              >
+                {item.expectedAnswer}
+              </motion.div>
+            )}
+          </div>
+        )}
+
+        {/* Right / Wrong */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          {item.whatWasRight.length > 0 && (
+            <div>
+              <p className="text-xs text-emerald-400 font-medium mb-1.5 flex items-center gap-1">
+                <CheckCircle className="w-3.5 h-3.5" /> What you got right
+              </p>
+              <ul className="space-y-1">
+                {item.whatWasRight.map((pt, i) => (
+                  <li key={i} className="text-xs text-surface-300 flex items-start gap-1.5">
+                    <span className="text-emerald-500 mt-0.5">•</span>{pt}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {item.whatWasWrong.length > 0 && (
+            <div>
+              <p className="text-xs text-red-400 font-medium mb-1.5 flex items-center gap-1">
+                <XCircle className="w-3.5 h-3.5" /> What to improve
+              </p>
+              <ul className="space-y-1">
+                {item.whatWasWrong.map((pt, i) => (
+                  <li key={i} className="text-xs text-surface-300 flex items-start gap-1.5">
+                    <span className="text-red-500 mt-0.5">•</span>{pt}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {item.feedback && (
+          <p className="text-xs text-surface-500 italic border-t border-white/5 pt-3">{item.feedback}</p>
+        )}
       </motion.div>
     );
   };
@@ -286,11 +392,31 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
           </div>
         </motion.div>
 
+        {/* Question Breakdown */}
+        {feedback.questionBreakdown && feedback.questionBreakdown.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6 }}
+            className="mb-8"
+          >
+            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <Star className="w-5 h-5 text-brand-400" />
+              Question-by-Question Breakdown
+            </h2>
+            <div className="space-y-4">
+              {feedback.questionBreakdown.map((item, i) => (
+                <QuestionCard key={i} item={item} index={i} />
+              ))}
+            </div>
+          </motion.div>
+        )}
+
         {/* Action Items */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
+          transition={{ delay: 0.7 }}
           className="flex flex-col sm:flex-row gap-3"
         >
           <Button variant="primary" size="lg" className="flex-1" onClick={() => navigate('/create')}>

@@ -25,6 +25,7 @@ class InterviewRoundBase(BaseModel):
     question_audio_recording: Optional[str] = None
     user_video_recording: Optional[str] = None
     transcript: Optional[str] = ""
+    expected_answer: Optional[str] = ""
     sentiment_analysis: Optional[Dict[str, Any]] = {}
     facial_expression_analysis: Optional[Dict[str, Any]] = {}
 

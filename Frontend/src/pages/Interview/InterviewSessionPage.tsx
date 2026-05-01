@@ -26,6 +26,7 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
   const [hasMicAccess, setHasMicAccess] = useState(false);
   const [hasCamAccess, setHasCamAccess] = useState(false);
   const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [audioPlayBlocked, setAudioPlayBlocked] = useState(false);
   const initializedRef = useRef(false);
 
   // Audio recording refs
@@ -62,7 +63,12 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
             'Content-Type': 'application/json',
             ...authHeader(token),
           },
-          body: JSON.stringify({ topic: config.role }),
+          body: JSON.stringify({
+            topic: config.role,
+            interview_type: config.type || 'mixed',
+            difficulty: config.experienceLevel || 'medium',
+            technologies: config.technologies || [],
+          }),
         });
         if (!res.ok) throw new Error('Failed to start session');
         const data = await res.json();
@@ -83,33 +89,31 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getToken, config.role, sessionPhase]);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement>(new Audio());
+  const pendingAudioRIdRef = useRef<string | null>(null);
 
   const playAudio = async (rId: string) => {
-    if (!audioRef.current) return;
     setIsAiSpeaking(true);
-    
+    setAudioPlayBlocked(false);
+    pendingAudioRIdRef.current = rId;
+
     const url = apiUrl(`/interview/question/audio/${rId}`);
     console.log("Playing audio from:", url);
-    
-    audioRef.current.src = url;
-    audioRef.current.volume = 1.0;
-    audioRef.current.load();
-    
-    audioRef.current.onloadedmetadata = () => {
-      console.log("Audio loaded. Duration:", audioRef.current?.duration);
-    };
-    audioRef.current.onended = () => setIsAiSpeaking(false);
-    audioRef.current.onerror = (e) => {
-      console.error("Audio playback error:", e);
-      setIsAiSpeaking(false);
-    };
-    
+
+    const audio = audioRef.current;
+    audio.onended = () => setIsAiSpeaking(false);
+    audio.onerror = () => setIsAiSpeaking(false);
+    audio.src = url;
+    audio.volume = 1.0;
+
     try {
-      await audioRef.current.play();
-    } catch (err) {
-      console.error("Audio play failed (interaction required?):", err);
+      await audio.play();
+    } catch (err: any) {
+      console.error("Audio play failed:", err.name, err.message);
       setIsAiSpeaking(false);
+      if (err.name === 'NotAllowedError') {
+        setAudioPlayBlocked(true);
+      }
     }
   };
 
@@ -154,6 +158,16 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
       videoRef.current.srcObject = streamRef.current;
     }
   }, [sessionPhase]);
+
+  // Stop all tracks on unmount so the camera indicator turns off
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
 
   const startRecording = async () => {
     try {
@@ -245,6 +259,13 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     }
   };
 
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+  };
+
   const handleNextQuestion = async () => {
     if (currentQuestion >= config.questionCount) {
       setLoading(true);
@@ -255,8 +276,10 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
           headers: authHeader(token),
         });
         toast.success('Interview completed!');
+        stopCamera();
         navigate(`/feedback/${sessionId}`);
       } catch (err: any) {
+        stopCamera();
         navigate(`/feedback/${sessionId}`);
       }
       return;
@@ -271,7 +294,12 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
           'Content-Type': 'application/json',
           ...authHeader(token),
         },
-        body: JSON.stringify({ topic: config.role, difficulty: config.experienceLevel || 'medium' }),
+        body: JSON.stringify({
+          topic: config.role,
+          difficulty: config.experienceLevel || 'medium',
+          interview_type: config.type || 'mixed',
+          technologies: config.technologies || [],
+        }),
       });
       if (!res.ok) throw new Error('Failed to fetch next question');
       const data = await res.json();
@@ -295,9 +323,11 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
           method: 'POST',
           headers: authHeader(token),
         });
+        stopCamera();
         navigate(`/feedback/${sessionId}`);
       } catch (err: any) {
         toast.error('Failed to end interview properly: ' + err.message);
+        stopCamera();
         navigate(`/feedback/${sessionId}`);
       }
     }
@@ -362,10 +392,15 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
             <Button variant="outline" onClick={() => navigate(-1)}>
               Cancel
             </Button>
-            <Button 
-              variant="primary" 
+            <Button
+              variant="primary"
               disabled={!hasMicAccess || !hasCamAccess}
-              onClick={() => setSessionPhase('active')}
+              onClick={() => {
+                // Touch the audio element inside user gesture so browser unlocks autoplay
+                audioRef.current.play().catch(() => {});
+                audioRef.current.pause();
+                setSessionPhase('active');
+              }}
             >
               Start Interview
             </Button>
@@ -376,9 +411,9 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
   }
 
   return (
-    <div className="min-h-screen bg-surface-950 flex flex-col">
+    <div className="h-screen overflow-hidden bg-surface-950 flex flex-col pt-16 lg:pt-20">
       {/* Header */}
-      <div className="bg-surface-900/80 backdrop-blur-xl border-b border-white/5 p-4 sticky top-0 z-50">
+      <div className="bg-surface-900/80 backdrop-blur-xl border-b border-white/5 p-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -414,92 +449,97 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
         </div>
       </div>
 
-      <div className="flex-1 flex">
-        {/* Video Section */}
-        <div className="flex-1 p-4 md:p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-200px)]">
-            {/* User Video */}
-            <div className="relative rounded-2xl overflow-hidden glass-card">
-              {isVideoOn ? (
-                <div className="w-full h-full bg-surface-900 flex items-center justify-center">
-                  <video 
-                    ref={videoRef} 
-                    autoPlay 
-                    muted 
-                    playsInline 
-                    className="w-full h-full object-cover transform scale-x-[-1]" 
-                  />
+      <div className="flex-1 relative overflow-hidden">
+        {/* Video Section — absolutely fills left area, independent of chat */}
+        <div className="absolute inset-0 md:right-96 flex flex-col p-4 md:p-6">
+          <div className="relative flex-1 rounded-2xl overflow-hidden glass-card">
+            {/* AI Interviewer — full area */}
+            <div className="w-full h-full bg-gradient-to-br from-brand-600/20 via-surface-900 to-brand-800/20 flex items-center justify-center">
+              <div className={`relative transition-all duration-500 ${isAiSpeaking ? 'scale-110' : 'scale-100'}`}>
+                {/* Animated rings */}
+                {isAiSpeaking && (
+                  <>
+                    <div className="absolute inset-[-20px] border-2 border-brand-400/20 rounded-full animate-ping" />
+                    <div className="absolute inset-[-40px] border border-brand-400/10 rounded-full animate-ping" style={{ animationDelay: '0.5s' }} />
+                  </>
+                )}
+                <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-2xl shadow-brand-500/20">
+                  <span className="text-4xl">🤖</span>
                 </div>
-              ) : (
-                <div className="w-full h-full bg-surface-900/50 flex flex-col items-center justify-center gap-3">
-                  <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center">
-                    <VideoOff className="w-8 h-8 text-surface-600" />
-                  </div>
-                  <span className="text-surface-600 text-sm">Camera is off</span>
-                </div>
-              )}
-              
-              <div className="absolute bottom-4 left-4 z-20">
-                <span className="bg-surface-900/80 backdrop-blur-sm px-3 py-1.5 rounded-lg text-white text-xs font-medium border border-white/10">
-                  You
-                </span>
               </div>
 
-              {isRecording && (
-                <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-red-500/20 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-red-500/30">
-                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  <span className="text-red-400 text-xs font-medium">Recording</span>
-                </div>
+              {/* Tap to hear — shown when autoplay is blocked */}
+              {audioPlayBlocked && pendingAudioRIdRef.current && (
+                <motion.button
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  onClick={() => playAudio(pendingAudioRIdRef.current!)}
+                  className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-surface-900/60 backdrop-blur-sm text-white z-30"
+                >
+                  <span className="text-3xl">🔊</span>
+                  <span className="text-sm font-medium">Tap to hear question</span>
+                </motion.button>
+              )}
+
+              {/* Repeat Audio Button */}
+              {!isAiSpeaking && !audioPlayBlocked && roundId && (
+                <motion.button
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  onClick={() => playAudio(roundId)}
+                  className="absolute top-4 right-4 z-30 p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors backdrop-blur-sm border border-white/10"
+                  title="Repeat Question"
+                >
+                  <MessageSquare className="w-5 h-5" />
+                </motion.button>
               )}
             </div>
 
-            {/* AI Interviewer */}
-            <div className="relative rounded-2xl overflow-hidden glass-card">
-              <div className="w-full h-full bg-gradient-to-br from-brand-600/20 via-surface-900 to-brand-800/20 flex items-center justify-center">
-                <div className={`relative transition-all duration-500 ${isAiSpeaking ? 'scale-110' : 'scale-100'}`}>
-                  {/* Animated rings */}
-                  {isAiSpeaking && (
-                    <>
-                      <div className="absolute inset-[-20px] border-2 border-brand-400/20 rounded-full animate-ping" />
-                      <div className="absolute inset-[-40px] border border-brand-400/10 rounded-full animate-ping" style={{ animationDelay: '0.5s' }} />
-                    </>
-                  )}
-                  <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-2xl shadow-brand-500/20">
-                    <span className="text-4xl">🤖</span>
+            <div className="absolute bottom-4 left-4 z-20">
+              <span className="bg-surface-900/80 backdrop-blur-sm px-3 py-1.5 rounded-lg text-white text-xs font-medium border border-white/10 flex items-center gap-2">
+                AI Interviewer
+                {isAiSpeaking && (
+                  <div className="flex gap-0.5">
+                    <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" />
+                    <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                    <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
                   </div>
-                </div>
-                
-                {/* Repeat Audio Button */}
-                {!isAiSpeaking && roundId && (
-                  <motion.button
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    onClick={() => playAudio(roundId)}
-                    className="absolute top-4 right-4 z-30 p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors backdrop-blur-sm border border-white/10"
-                    title="Repeat Question"
-                  >
-                    <MessageSquare className="w-5 h-5" />
-                  </motion.button>
                 )}
-              </div>
-              
-              <div className="absolute bottom-4 left-4 z-20">
-                <span className="bg-surface-900/80 backdrop-blur-sm px-3 py-1.5 rounded-lg text-white text-xs font-medium border border-white/10 flex items-center gap-2">
-                  AI Interviewer
-                  {isAiSpeaking && (
-                    <div className="flex gap-0.5">
-                      <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" />
-                      <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                      <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                    </div>
-                  )}
+              </span>
+            </div>
+
+            {/* Camera PiP — absolute bottom-right */}
+            <div className="absolute bottom-4 right-4 w-48 aspect-video rounded-xl overflow-hidden border border-white/10 shadow-xl z-10">
+              {isVideoOn ? (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover transform scale-x-[-1]"
+                />
+              ) : (
+                <div className="w-full h-full bg-surface-900/80 flex flex-col items-center justify-center gap-2">
+                  <VideoOff className="w-6 h-6 text-surface-600" />
+                  <span className="text-surface-600 text-xs">Camera off</span>
+                </div>
+              )}
+              <div className="absolute bottom-2 left-2 z-20">
+                <span className="bg-surface-900/80 backdrop-blur-sm px-2 py-1 rounded-md text-white text-xs font-medium border border-white/10">
+                  You
                 </span>
               </div>
+              {isRecording && (
+                <div className="absolute top-2 right-2 z-20 flex items-center gap-1 bg-red-500/20 backdrop-blur-sm px-2 py-1 rounded-md border border-red-500/30">
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-red-400 text-xs font-medium">REC</span>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Controls */}
-          <div className="flex justify-center mt-6 gap-3">
+          <div className="flex justify-center mt-4 gap-3">
             <motion.button
               whileTap={{ scale: 0.95 }}
               onClick={toggleRecording}
@@ -537,8 +577,8 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
           </div>
         </div>
 
-        {/* Transcript Panel */}
-        <div className="w-80 lg:w-96 bg-surface-900/50 backdrop-blur-xl border-l border-white/5 flex flex-col hidden md:flex">
+        {/* Transcript Panel — absolutely positioned, never affects left layout */}
+        <div className="absolute right-0 top-0 bottom-0 w-96 bg-surface-900/50 backdrop-blur-xl border-l border-white/5 flex-col overflow-hidden hidden md:flex">
           <div className="p-4 border-b border-white/5">
             <h3 className="text-white font-semibold flex items-center gap-2 text-sm">
               <MessageSquare className="w-4 h-4 text-brand-400" />
@@ -599,7 +639,6 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
           </div>
         </div>
       </div>
-      <audio ref={audioRef} className="hidden" />
     </div>
   );
 };
