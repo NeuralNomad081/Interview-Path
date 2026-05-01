@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import Button from '../../components/UI/Button';
 import { useAuth } from '../../hooks/useAuth';
+import { apiUrl, authHeader } from '../../lib/api';
 
 interface FeedbackMetrics {
   overallScore: number;
@@ -28,7 +29,7 @@ interface FeedbackPageProps {
 const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { getToken } = useAuth();
   
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState<FeedbackMetrics | null>(null);
@@ -36,8 +37,9 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
   useEffect(() => {
     const fetchReport = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/interview/report/${id}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+        const token = await getToken();
+        const res = await fetch(apiUrl(`/interview/report/${id}`), {
+          headers: authHeader(token),
         });
         if (!res.ok) throw new Error('Failed to fetch interview report');
         const data = await res.json();
@@ -51,7 +53,7 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ onBack }) => {
     };
     
     if (id) fetchReport();
-  }, [id, token]);
+  }, [id, getToken]);
 
   const ScoreCircle = ({ score, label }: { score: number; label: string }) => {
     const percentage = (score / 10) * 100;

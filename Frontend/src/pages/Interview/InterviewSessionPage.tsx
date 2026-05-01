@@ -4,11 +4,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import Button from '../../components/UI/Button';
 import { useAuth } from '../../hooks/useAuth';
+import { apiUrl, authHeader } from '../../lib/api';
 
 const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete}) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { getToken } = useAuth();
   const config = location.state?.config || { questionCount: 5, role: 'General' };
 
   const [isRecording, setIsRecording] = useState(false);
@@ -38,13 +39,14 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
   useEffect(() => {
     const initSession = async () => {
       try {
-        const res = await fetch('http://localhost:8000/interview/start', {
+        const token = await getToken();
+        const res = await fetch(apiUrl('/interview/start'), {
           method: 'POST',
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}` 
+            ...authHeader(token),
           },
-          body: JSON.stringify({ topic: config.role })
+          body: JSON.stringify({ topic: config.role }),
         });
         if (!res.ok) throw new Error('Failed to start session');
         const data = await res.json();
@@ -63,13 +65,14 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     };
     initSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, config.role]);
+  }, [getToken, config.role]);
 
   const playAudio = async (rId: string) => {
     setIsAiSpeaking(true);
     try {
-      const res = await fetch(`http://localhost:8000/interview/question/audio/${rId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const token = await getToken();
+      const res = await fetch(apiUrl(`/interview/question/audio/${rId}`), {
+        headers: authHeader(token),
       });
       if (res.ok) {
         const blob = await res.blob();
@@ -130,8 +133,8 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
       };
 
       mediaRecorder.onstop = async () => {
-        // Create webm blob combining audio and potential video if camera was on
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'video/webm' });
+        // audio/webm is the standard MIME for browser-recorded audio blobs
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         await submitAnswer(audioBlob);
       };
 
@@ -169,22 +172,23 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     audioFormData.append('audio_file', audioBlob, 'answer.webm');
 
     try {
+      const token = await getToken();
       if (isVideoOn) {
         const videoFormData = new FormData();
         videoFormData.append('video_file', audioBlob, 'answer.webm');
         
-        // Let facial emotion process in the background without awaiting to block UX strictly
-        fetch(`http://localhost:8000/interview/answer/video/${roundId}`, {
+        // Let facial emotion process in the background without blocking UX
+        fetch(apiUrl(`/interview/answer/video/${roundId}`), {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
-          body: videoFormData
-        }).catch(e => console.error("Facial submission silent error:", e));
+          headers: authHeader(token),
+          body: videoFormData,
+        }).catch(e => console.error('Facial submission error:', e));
       }
 
-      const res = await fetch(`http://localhost:8000/interview/answer/audio/${roundId}`, {
+      const res = await fetch(apiUrl(`/interview/answer/audio/${roundId}`), {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: audioFormData
+        headers: authHeader(token),
+        body: audioFormData,
       });
       if (!res.ok) throw new Error('Failed to submit answer');
       const data = await res.json();
@@ -198,21 +202,22 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
 
   const handleNextQuestion = async () => {
     if (currentQuestion >= config.questionCount) {
-      toast.success("Interview completed!");
-      if (onComplete) onComplete();
-      else navigate(`/feedback/${sessionId}`);
+      toast.success('Interview completed!');
+      // Always navigate to the real session UUID — never to /feedback/new
+      navigate(`/feedback/${sessionId}`);
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:8000/interview/next/${sessionId}`, {
+      const token = await getToken();
+      const res = await fetch(apiUrl(`/interview/next/${sessionId}`), {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` 
+          ...authHeader(token),
         },
-        body: JSON.stringify({ topic: config.role, difficulty: config.experienceLevel || "medium" })
+        body: JSON.stringify({ topic: config.role, difficulty: config.experienceLevel || 'medium' }),
       });
       if (!res.ok) throw new Error('Failed to fetch next question');
       const data = await res.json();

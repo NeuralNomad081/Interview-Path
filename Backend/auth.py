@@ -1,37 +1,24 @@
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from datetime import datetime, timedelta
-from typing import Optional
 import os
+import jwt
+from clerk_backend_api import Clerk
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "your-secret-key")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY")
+clerk = Clerk(bearer_auth=CLERK_SECRET_KEY)
+JWKS_URL = "https://api.clerk.com/v1/jwks"
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+jwks_client = jwt.PyJWKClient(JWKS_URL, headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"})
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-def decode_access_token(token: str):
+def decode_access_token(token: str) -> str | None:
+    """Decodes a Clerk JWT and returns the subject (clerk_user_id), or None if invalid/expired."""
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            return None
-        return email
-    except JWTError:
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            options={"verify_aud": False}
+        )
+        return payload.get("sub")
+    except Exception as e:
+        print(f"Token verification failed: {e}")
         return None

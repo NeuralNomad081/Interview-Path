@@ -5,6 +5,7 @@ import InterviewCard from '../../components/Cards/InterviewCard';
 import { Interview } from '../../types';
 import { useAuth } from '../../hooks/useAuth';
 import { toast } from 'sonner';
+import { apiUrl, authHeader } from '../../lib/api';
 
 interface DashboardPageProps {
   onCreateInterview: () => void;
@@ -12,15 +13,16 @@ interface DashboardPageProps {
 }
 
 const DashboardPage: React.FC<DashboardPageProps> = ({ onCreateInterview, onViewInterview }) => {
-  const { token } = useAuth();
+  const { getToken } = useAuth();
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchSessions = async () => {
       try {
-        const res = await fetch('http://localhost:8000/interview/sessions', {
-          headers: { 'Authorization': `Bearer ${token}` }
+        const token = await getToken();
+        const res = await fetch(apiUrl('/interview/sessions'), {
+          headers: authHeader(token),
         });
         if (!res.ok) throw new Error('Failed to load sessions');
         const data = await res.json();
@@ -31,8 +33,8 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onCreateInterview, onView
         setLoading(false);
       }
     };
-    if (token) fetchSessions();
-  }, [token]);
+    fetchSessions();
+  }, [getToken]);
 
   const completedInterviews = interviews.filter(i => i.status === 'completed');
   const averageScore = completedInterviews.length > 0 

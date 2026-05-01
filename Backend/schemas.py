@@ -1,13 +1,16 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
+
 
 class UserBase(BaseModel):
     email: str
 
+
 class UserCreate(UserBase):
     password: str
+
 
 class User(UserBase):
     id: uuid.UUID
@@ -16,16 +19,19 @@ class User(UserBase):
     class Config:
         from_attributes = True
 
+
 class InterviewRoundBase(BaseModel):
     question: str
-    user_audio_recording: str
-    user_video_recording: str
-    transcript: str
-    sentiment_analysis: dict
-    facial_expression_analysis: dict
+    question_audio_recording: Optional[str] = None
+    user_video_recording: Optional[str] = None
+    transcript: Optional[str] = ""
+    sentiment_analysis: Optional[Dict[str, Any]] = {}
+    facial_expression_analysis: Optional[Dict[str, Any]] = {}
+
 
 class InterviewRoundCreate(InterviewRoundBase):
     pass
+
 
 class InterviewRound(InterviewRoundBase):
     id: uuid.UUID
@@ -34,11 +40,14 @@ class InterviewRound(InterviewRoundBase):
     class Config:
         from_attributes = True
 
+
 class InterviewSessionBase(BaseModel):
     report: Optional[str] = None
 
+
 class InterviewSessionCreate(InterviewSessionBase):
     pass
+
 
 class InterviewSession(InterviewSessionBase):
     id: uuid.UUID

@@ -1,33 +1,48 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
-from sqlalchemy.orm import Session
-from fastapi.middleware.cors import CORSMiddleware
-import database
-import schemas
-import models
-import auth
-from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+import logging
 import os
 import uuid
-import interview
-import tts
-from fastapi.responses import FileResponse
-import transcription
-import sentiment
-import facial
-import cv2
-import report
-from pydantic import BaseModel
 
+import cv2
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+import auth
+import database
+import facial
+import interview
+import models
+import report
+import schemas
+import sentiment
+import transcription
+import tts
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# DB bootstrap
+# ---------------------------------------------------------------------------
 models.Base.metadata.create_all(bind=database.engine)
 
 os.makedirs("audio", exist_ok=True)
 os.makedirs("video", exist_ok=True)
 os.makedirs("frames", exist_ok=True)
 
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
 app = FastAPI(
     title="Interview-Path API",
     description="The backend for the Interview-Path application.",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -40,55 +55,74 @@ app.add_middleware(
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-@app.post("/register", response_model=schemas.User)
-def create_user(user: schemas.UserCreate, db: Session = Depends(database.SessionLocal)):
-    db_user = db.query(models.User).filter(models.User.email == user.email).first()
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    hashed_password = auth.get_password_hash(user.password)
-    new_user = models.User(email=user.email, hashed_password=hashed_password)
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return new_user
 
-@app.post("/login")
-def login(request: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(database.SessionLocal)):
-    user = db.query(models.User).filter(models.User.email == request.username).first()
-    if not user or not auth.verify_password(request.password, user.hashed_password):
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+
+def get_current_user_id(token: str = Depends(oauth2_scheme)) -> str:
+    """Validates token and returns the clerk user id, raising 401 if invalid."""
+    clerk_user_id = auth.decode_access_token(token)
+    if not clerk_user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token = auth.create_access_token(
-        data={"sub": user.email}
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return clerk_user_id
+
+
+def get_current_user(
+    clerk_user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(database.get_db),
+) -> models.User:
+    user = db.query(models.User).filter(models.User.clerk_id == clerk_user_id).first()
+    if not user:
+        try:
+            clerk_user = auth.clerk.users.get(clerk_user_id)
+            email = clerk_user.email_addresses[0].email_address if clerk_user.email_addresses else f"{clerk_user_id}@clerk.com"
+        except Exception as e:
+            print(f"Failed to fetch clerk user: {e}")
+            email = f"{clerk_user_id}@clerk.com"
+            
+        user = models.User(clerk_id=clerk_user_id, email=email, hashed_password="")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "Interview-Path API is running"}
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Interview endpoints
+# ---------------------------------------------------------------------------
 
 class InterviewRequest(BaseModel):
     topic: str
 
+
 @app.post("/interview/start", response_model=schemas.InterviewSession)
 def start_interview_session(
     request: InterviewRequest,
-    db: Session = Depends(database.SessionLocal),
-    token: str = Depends(oauth2_scheme)
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
-    current_user = auth.decode_access_token(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    user = db.query(models.User).filter(models.User.email == current_user).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    new_session = models.InterviewSession(user_id=user.id)
+    new_session = models.InterviewSession(user_id=current_user.id)
     db.add(new_session)
     db.commit()
     db.refresh(new_session)
 
-    # Generate the first question
     question_text = interview.generate_interview_question(request.topic)
     audio_file_path = f"audio/{uuid.uuid4()}.mp3"
     tts.text_to_speech(question_text, audio_file_path)
@@ -106,35 +140,37 @@ def start_interview_session(
     db.commit()
     db.refresh(new_round)
 
-    new_session.rounds.append(new_round)
-
+    # Reload session so rounds relationship is populated
+    db.refresh(new_session)
     return new_session
+
 
 class NextQuestionRequest(BaseModel):
     topic: str
     difficulty: str = "medium"
 
+
 @app.post("/interview/next/{session_id}")
 def generate_next_question(
     session_id: uuid.UUID,
     request: NextQuestionRequest,
-    db: Session = Depends(database.SessionLocal),
-    token: str = Depends(oauth2_scheme)
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
-    current_user = auth.decode_access_token(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-
-    session = db.query(models.InterviewSession).filter(models.InterviewSession.id == session_id).first()
+    session = db.query(models.InterviewSession).filter(
+        models.InterviewSession.id == str(session_id)
+    ).first()
     if not session:
         raise HTTPException(status_code=404, detail="Interview session not found")
+    if str(session.user_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     question_text = interview.generate_interview_question(request.topic, request.difficulty)
     audio_file_path = f"audio/{uuid.uuid4()}.mp3"
     tts.text_to_speech(question_text, audio_file_path)
 
     new_round = models.InterviewRound(
-        session_id=session.id,
+        session_id=str(session.id),
         question=question_text,
         question_audio_recording=audio_file_path,
         user_video_recording="",
@@ -148,111 +184,122 @@ def generate_next_question(
 
     return new_round
 
+
 @app.post("/interview/answer/audio/{round_id}")
 async def answer_question_audio(
     round_id: uuid.UUID,
     audio_file: UploadFile = File(...),
-    db: Session = Depends(database.SessionLocal)
+    db: Session = Depends(database.get_db),
 ):
-    interview_round = db.query(models.InterviewRound).filter(models.InterviewRound.id == round_id).first()
+    interview_round = db.query(models.InterviewRound).filter(
+        models.InterviewRound.id == str(round_id)
+    ).first()
     if not interview_round:
         raise HTTPException(status_code=404, detail="Interview round not found")
 
-    # Save the audio file
-    audio_file_path = f"audio/{uuid.uuid4()}.mp3"
+    # Save audio blob (browser sends webm/ogg which Whisper can handle)
+    audio_file_path = f"audio/{uuid.uuid4()}.webm"
+    contents = await audio_file.read()
     with open(audio_file_path, "wb") as buffer:
-        buffer.write(await audio_file.read())
+        buffer.write(contents)
 
-    # Transcribe the audio
     transcript_text = transcription.transcribe_audio(audio_file_path)
-
-    # Analyze the sentiment
     sentiment_scores = sentiment.analyze_sentiment(transcript_text)
 
-    # Save the transcript and sentiment to the database
     interview_round.transcript = transcript_text
     interview_round.sentiment_analysis = sentiment_scores
     db.commit()
 
     return {"transcript": transcript_text, "sentiment": sentiment_scores}
 
+
 @app.post("/interview/answer/video/{round_id}")
 async def answer_question_video(
     round_id: uuid.UUID,
     video_file: UploadFile = File(...),
-    db: Session = Depends(database.SessionLocal)
+    db: Session = Depends(database.get_db),
 ):
-    interview_round = db.query(models.InterviewRound).filter(models.InterviewRound.id == round_id).first()
+    interview_round = db.query(models.InterviewRound).filter(
+        models.InterviewRound.id == str(round_id)
+    ).first()
     if not interview_round:
         raise HTTPException(status_code=404, detail="Interview round not found")
 
-    # Save the video file
-    video_file_path = f"video/{uuid.uuid4()}.mp4"
+    video_file_path = f"video/{uuid.uuid4()}.webm"
+    contents = await video_file.read()
     with open(video_file_path, "wb") as buffer:
-        buffer.write(await video_file.read())
+        buffer.write(contents)
 
-    # Analyze the facial expression
     emotions = facial.analyze_facial_expression(video_file_path)
-
-    # Save the facial expression analysis to the database
     interview_round.facial_expression_analysis = emotions
     db.commit()
 
     return {"emotions": emotions}
 
-@app.get("/interview/question/audio/{round_id}")
-def get_question_audio(round_id: uuid.UUID, db: Session = Depends(database.SessionLocal)):
-    interview_round = db.query(models.InterviewRound).filter(models.InterviewRound.id == round_id).first()
-    if not interview_round:
-        raise HTTPException(status_code=404, detail="Interview round not found")
 
-    return FileResponse(interview_round.question_audio_recording)
+@app.get("/interview/question/audio/{round_id}")
+def get_question_audio(
+    round_id: uuid.UUID,
+    db: Session = Depends(database.get_db),
+):
+    interview_round = db.query(models.InterviewRound).filter(
+        models.InterviewRound.id == str(round_id)
+    ).first()
+    if not interview_round or not interview_round.question_audio_recording:
+        raise HTTPException(status_code=404, detail="Audio not found")
+
+    return FileResponse(
+        interview_round.question_audio_recording,
+        media_type="audio/mpeg",
+        filename="question.mp3",
+    )
+
 
 @app.get("/interview/report/{session_id}")
-def get_report(session_id: uuid.UUID, db: Session = Depends(database.SessionLocal)):
+def get_report(
+    session_id: uuid.UUID,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    session = db.query(models.InterviewSession).filter(
+        models.InterviewSession.id == str(session_id)
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if str(session.user_id) != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
     return report.generate_report(session_id, db)
+
 
 @app.get("/interview/sessions")
 def get_user_sessions(
-    db: Session = Depends(database.SessionLocal),
-    token: str = Depends(oauth2_scheme)
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
-    current_user = auth.decode_access_token(token)
-    if not current_user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    sessions = (
+        db.query(models.InterviewSession)
+        .filter(models.InterviewSession.user_id == str(current_user.id))
+        .order_by(models.InterviewSession.session_date.desc())
+        .all()
+    )
 
-    user = db.query(models.User).filter(models.User.email == current_user).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    sessions = db.query(models.InterviewSession).filter(models.InterviewSession.user_id == user.id).order_by(models.InterviewSession.session_date.desc()).all()
-    # Simple mapping to match the frontend expectations
     result = []
     for session in sessions:
-        # derive some stats or mock it if empty
         completed_rounds = len(session.rounds)
-        status = 'completed' if session.report else 'in-progress'
-        
-        # let's find a topic to show
-        topic = "General"
-        if completed_rounds > 0 and session.rounds[0].question:
-            topic = "Custom Interview"
+        session_status = "completed" if session.report else "in-progress"
+        topic = "Custom Interview" if completed_rounds > 0 and session.rounds[0].question else "General"
 
         result.append({
             "id": str(session.id),
             "date": session.session_date.isoformat(),
-            "status": status,
+            "status": session_status,
             "role": topic,
             "duration": completed_rounds * 5,
-            "score": 8.0 if session.report else None, # Real scoring could be implemented later
+            "score": 8.0 if session.report else None,
             "type": "mixed",
             "company": "Practice",
             "companyLogo": "🤖",
-            "techStack": []
+            "techStack": [],
         })
 
     return result
-
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
