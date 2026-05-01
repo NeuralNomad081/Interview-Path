@@ -42,6 +42,7 @@ class InterviewRound(InterviewRoundBase):
 
 
 class InterviewSessionBase(BaseModel):
+    role: Optional[str] = "General"
     report: Optional[str] = None
 
 
@@ -53,6 +54,7 @@ class InterviewSession(InterviewSessionBase):
     id: uuid.UUID
     user_id: uuid.UUID
     session_date: datetime
+    end_date: Optional[datetime] = None
     rounds: List[InterviewRound] = []
 
     class Config:

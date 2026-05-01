@@ -17,11 +17,23 @@ def analyze_facial_expression(video_path: str) -> dict:
     """
     emotions: dict = {}
     vidcap = cv2.VideoCapture(video_path)
+    if not vidcap.isOpened():
+        logger.error(f"Could not open video file: {video_path}")
+        return {}
+
+    frame_count = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
+    logger.info(f"Analyzing video: {video_path} with {frame_count} frames")
+
+    # If the video is very short, reduce interval to ensure at least some frames are sampled
+    interval = FRAME_SAMPLE_INTERVAL
+    if frame_count > 0 and frame_count < FRAME_SAMPLE_INTERVAL * 2:
+        interval = max(1, frame_count // 5)
+
     frame_index = 0
     success, image = vidcap.read()
 
     while success:
-        if frame_index % FRAME_SAMPLE_INTERVAL == 0:
+        if frame_index % interval == 0:
             try:
                 result = DeepFace.analyze(
                     img_path=image,

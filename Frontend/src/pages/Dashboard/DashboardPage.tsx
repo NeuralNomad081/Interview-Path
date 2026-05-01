@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { PlusCircle, TrendingUp, Clock, Award, ChevronRight } from 'lucide-react';
+import { PlusCircle, TrendingUp, Clock, Award, ChevronRight, BarChart3, Sparkles } from 'lucide-react';
+import { motion } from 'framer-motion';
 import Button from '../../components/UI/Button';
 import InterviewCard from '../../components/Cards/InterviewCard';
 import { Interview } from '../../types';
@@ -13,28 +14,44 @@ interface DashboardPageProps {
 }
 
 const DashboardPage: React.FC<DashboardPageProps> = ({ onCreateInterview, onViewInterview }) => {
-  const { getToken } = useAuth();
+  const { getToken, user } = useAuth();
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchSessions = async () => {
-      try {
-        const token = await getToken();
-        const res = await fetch(apiUrl('/interview/sessions'), {
-          headers: authHeader(token),
-        });
-        if (!res.ok) throw new Error('Failed to load sessions');
-        const data = await res.json();
-        setInterviews(data);
-      } catch (err: any) {
-        toast.error(err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchSessions();
   }, [getToken]);
+
+  const fetchSessions = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(apiUrl('/interview/sessions'), {
+        headers: authHeader(token),
+      });
+      if (!res.ok) throw new Error('Failed to load sessions');
+      const data = await res.json();
+      setInterviews(data);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(apiUrl(`/interview/${id}`), {
+        method: 'DELETE',
+        headers: authHeader(token),
+      });
+      if (!res.ok) throw new Error('Failed to delete interview');
+      toast.success('Interview deleted successfully');
+      setInterviews(prev => prev.filter(i => i.id !== id));
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
 
   const completedInterviews = interviews.filter(i => i.status === 'completed');
   const averageScore = completedInterviews.length > 0 
@@ -43,98 +60,139 @@ const DashboardPage: React.FC<DashboardPageProps> = ({ onCreateInterview, onView
   const totalHours = interviews.reduce((acc, i) => acc + (i.duration || 0), 0) / 60;
 
   if (loading) {
-    return <div className="text-white text-center py-20">Loading your dashboard...</div>;
+    return (
+      <div className="min-h-screen bg-surface-950 flex items-center justify-center pt-20">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
+          <span className="text-surface-400 text-sm">Loading your dashboard...</span>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="min-h-screen bg-surface-950 pt-24 pb-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Dashboard</h1>
-          <p className="text-gray-400">Track your interview progress and create new practice sessions</p>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="mb-8"
+        >
+          <h1 className="text-3xl font-bold text-white mb-2">
+            Welcome back{user?.name ? `, ${user.name.split(' ')[0]}` : ''} 👋
+          </h1>
+          <p className="text-surface-500">Track your interview progress and start new practice sessions</p>
+        </motion.div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
-            <div className="flex items-center justify-between">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+          className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8"
+        >
+          <div className="stat-card">
+            <div className="flex items-center justify-between relative z-10">
               <div>
-                <p className="text-gray-400 text-sm font-medium">Total Interviews</p>
-                <p className="text-2xl font-bold text-white mt-1">{interviews.length}</p>
+                <p className="text-surface-500 text-sm font-medium">Total Interviews</p>
+                <p className="text-3xl font-bold text-white mt-1">{interviews.length}</p>
               </div>
-              <div className="bg-blue-500/20 p-3 rounded-lg">
-                <Clock className="w-6 h-6 text-blue-400" />
+              <div className="w-12 h-12 rounded-2xl bg-brand-500/10 flex items-center justify-center">
+                <BarChart3 className="w-6 h-6 text-brand-400" />
               </div>
             </div>
           </div>
 
-          <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
-            <div className="flex items-center justify-between">
+          <div className="stat-card">
+            <div className="flex items-center justify-between relative z-10">
               <div>
-                <p className="text-gray-400 text-sm font-medium">Average Score</p>
-                <p className="text-2xl font-bold text-white mt-1">{averageScore.toFixed(1)}/10</p>
+                <p className="text-surface-500 text-sm font-medium">Average Score</p>
+                <p className="text-3xl font-bold text-white mt-1">{averageScore.toFixed(1)}<span className="text-surface-600 text-lg">/10</span></p>
               </div>
-              <div className="bg-green-500/20 p-3 rounded-lg">
-                <Award className="w-6 h-6 text-green-400" />
+              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+                <Award className="w-6 h-6 text-emerald-400" />
               </div>
             </div>
           </div>
 
-          <div className="bg-gray-800 border border-gray-700 rounded-xl p-6">
-            <div className="flex items-center justify-between">
+          <div className="stat-card">
+            <div className="flex items-center justify-between relative z-10">
               <div>
-                <p className="text-gray-400 text-sm font-medium">Practice Hours</p>
-                <p className="text-2xl font-bold text-white mt-1">{totalHours.toFixed(1)}h</p>
+                <p className="text-surface-500 text-sm font-medium">Practice Hours</p>
+                <p className="text-3xl font-bold text-white mt-1">{totalHours.toFixed(1)}<span className="text-surface-600 text-lg">h</span></p>
               </div>
-              <div className="bg-purple-500/20 p-3 rounded-lg">
-                <TrendingUp className="w-6 h-6 text-purple-400" />
+              <div className="w-12 h-12 rounded-2xl bg-purple-500/10 flex items-center justify-center">
+                <Clock className="w-6 h-6 text-purple-400" />
               </div>
             </div>
           </div>
-        </div>
+        </motion.div>
 
         {/* Create Interview CTA */}
-        <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-8 mb-8 text-center">
-          <h2 className="text-2xl font-bold text-white mb-2">Ready for your next interview?</h2>
-          <p className="text-blue-100 mb-6">Practice with our AI interviewer and get instant feedback</p>
-          <Button
-            onClick={onCreateInterview}
-            variant="primary"
-            size="lg"
-            className="bg-white text-blue-600 hover:bg-gray-100 font-semibold"
-          >
-            <PlusCircle className="w-5 h-5 mr-2" />
-            Create New Interview
-          </Button>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.2 }}
+          className="relative rounded-2xl overflow-hidden mb-8"
+        >
+          <div className="absolute inset-0 bg-gradient-to-br from-brand-600 via-brand-700 to-surface-900" />
+          <div className="absolute inset-0 opacity-20" style={{
+            backgroundImage: `radial-gradient(circle at 20% 50%, rgba(255,255,255,0.1) 0%, transparent 50%)`
+          }} />
+          <div className="relative z-10 p-8 md:p-10 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div>
+              <h2 className="text-2xl font-bold text-white mb-2">Ready for your next interview?</h2>
+              <p className="text-brand-200 max-w-md">Practice with our AI interviewer and receive instant, detailed feedback to improve your performance.</p>
+            </div>
+            <Button
+              onClick={onCreateInterview}
+              variant="primary"
+              size="lg"
+              className="bg-white !text-surface-900 hover:bg-surface-100 !from-white !to-white shrink-0"
+            >
+              <PlusCircle className="w-5 h-5" />
+              Create New Interview
+            </Button>
+          </div>
+        </motion.div>
 
         {/* Interview History */}
-        <div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.3 }}
+        >
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-white">Recent Interviews</h2>
-            <button className="flex items-center text-blue-400 hover:text-blue-300 transition-colors">
-              View all
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </button>
           </div>
 
           {interviews.length === 0 ? (
-            <div className="text-center py-10 bg-gray-800 rounded-xl border border-gray-700">
-              <p className="text-gray-400 mb-4">You haven't completed any interviews yet.</p>
+            <div className="glass-card p-12 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-brand-500/10 flex items-center justify-center mx-auto mb-4">
+                <Sparkles className="w-8 h-8 text-brand-400" />
+              </div>
+              <h3 className="text-white font-semibold text-lg mb-2">No interviews yet</h3>
+              <p className="text-surface-500 mb-6 max-w-sm mx-auto">Start your first practice interview and begin tracking your progress.</p>
+              <Button onClick={onCreateInterview} variant="primary">
+                <PlusCircle className="w-4 h-4" />
+                Start Your First Interview
+              </Button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {interviews.map((interview) => (
                 <InterviewCard
                   key={interview.id}
                   interview={interview}
                   onClick={() => onViewInterview(interview)}
+                  onDelete={handleDelete}
                 />
               ))}
             </div>
           )}
-        </div>
+        </motion.div>
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, VideoOff, Video, MessageSquare, Clock } from 'lucide-react';
+import { Mic, MicOff, VideoOff, Video, MessageSquare, Clock, LogOut } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import Button from '../../components/UI/Button';
 import { useAuth } from '../../hooks/useAuth';
@@ -13,7 +14,7 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
   const config = location.state?.config || { questionCount: 5, role: 'General' };
 
   const [isRecording, setIsRecording] = useState(false);
-  const [isVideoOn, setIsVideoOn] = useState(false);
+  const [isVideoOn, setIsVideoOn] = useState(true);
   const [currentQuestion, setCurrentQuestion] = useState(1);
   const [timeElapsed, setTimeElapsed] = useState(0);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
@@ -21,12 +22,14 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [roundId, setRoundId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const initializedRef = useRef(false);
 
   // Audio recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -35,8 +38,16 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     return () => clearInterval(timer);
   }, []);
 
+  // Auto-scroll transcript
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [transcript, isAiSpeaking]);
+
   // Initialize session
   useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
     const initSession = async () => {
       try {
         const token = await getToken();
@@ -67,23 +78,32 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getToken, config.role]);
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   const playAudio = async (rId: string) => {
+    if (!audioRef.current) return;
     setIsAiSpeaking(true);
+    
+    const url = apiUrl(`/interview/question/audio/${rId}`);
+    console.log("Playing audio from:", url);
+    
+    audioRef.current.src = url;
+    audioRef.current.volume = 1.0;
+    audioRef.current.load();
+    
+    audioRef.current.onloadedmetadata = () => {
+      console.log("Audio loaded. Duration:", audioRef.current?.duration);
+    };
+    audioRef.current.onended = () => setIsAiSpeaking(false);
+    audioRef.current.onerror = (e) => {
+      console.error("Audio playback error:", e);
+      setIsAiSpeaking(false);
+    };
+    
     try {
-      const token = await getToken();
-      const res = await fetch(apiUrl(`/interview/question/audio/${rId}`), {
-        headers: authHeader(token),
-      });
-      if (res.ok) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => setIsAiSpeaking(false);
-        audio.play();
-      } else {
-        setIsAiSpeaking(false);
-      }
-    } catch {
+      await audioRef.current.play();
+    } catch (err) {
+      console.error("Audio play failed (interaction required?):", err);
       setIsAiSpeaking(false);
     }
   };
@@ -133,9 +153,10 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
       };
 
       mediaRecorder.onstop = async () => {
-        // audio/webm is the standard MIME for browser-recorded audio blobs
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        await submitAnswer(audioBlob);
+        // Use video/webm if we have video, otherwise audio/webm
+        const mimeType = isVideoOn ? 'video/webm' : 'audio/webm';
+        const recordedBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        await submitAnswer(recordedBlob);
       };
 
       mediaRecorder.start();
@@ -149,7 +170,7 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      // We don't stop the stream tracks anymore here, because the video preview uses them
+      // Keep the stream alive if video is on, otherwise stop it
       if (!isVideoOn && streamRef.current) {
          streamRef.current.getTracks().forEach(track => track.stop());
          streamRef.current = null;
@@ -161,21 +182,26 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     if (isRecording) {
       stopRecording();
     } else {
+      if (isAiSpeaking) {
+        toast.error('Wait for AI to finish speaking');
+        return;
+      }
       startRecording();
     }
   };
 
-  const submitAnswer = async (audioBlob: Blob) => {
+  const submitAnswer = async (recordedBlob: Blob) => {
     if (!roundId) return;
     setLoading(true);
     const audioFormData = new FormData();
-    audioFormData.append('audio_file', audioBlob, 'answer.webm');
+    // Use .webm as the extension since that's what browser records
+    audioFormData.append('audio_file', recordedBlob, 'answer.webm');
 
     try {
       const token = await getToken();
       if (isVideoOn) {
         const videoFormData = new FormData();
-        videoFormData.append('video_file', audioBlob, 'answer.webm');
+        videoFormData.append('video_file', recordedBlob, 'answer.webm');
         
         // Let facial emotion process in the background without blocking UX
         fetch(apiUrl(`/interview/answer/video/${roundId}`), {
@@ -202,9 +228,18 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
 
   const handleNextQuestion = async () => {
     if (currentQuestion >= config.questionCount) {
-      toast.success('Interview completed!');
-      // Always navigate to the real session UUID — never to /feedback/new
-      navigate(`/feedback/${sessionId}`);
+      setLoading(true);
+      try {
+        const token = await getToken();
+        await fetch(apiUrl(`/interview/end/${sessionId}`), {
+          method: 'POST',
+          headers: authHeader(token),
+        });
+        toast.success('Interview completed!');
+        navigate(`/feedback/${sessionId}`);
+      } catch (err: any) {
+        navigate(`/feedback/${sessionId}`);
+      }
       return;
     }
 
@@ -232,46 +267,78 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     }
   };
 
+  const endInterview = async () => {
+    if (window.confirm('Are you sure you want to end the interview early? You will still receive feedback for the questions you completed.')) {
+      setLoading(true);
+      try {
+        const token = await getToken();
+        await fetch(apiUrl(`/interview/end/${sessionId}`), {
+          method: 'POST',
+          headers: authHeader(token),
+        });
+        navigate(`/feedback/${sessionId}`);
+      } catch (err: any) {
+        toast.error('Failed to end interview properly: ' + err.message);
+        navigate(`/feedback/${sessionId}`);
+      }
+    }
+  };
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const progress = (currentQuestion / config.questionCount) * 100;
+
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
+    <div className="min-h-screen bg-surface-950 flex flex-col">
       {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700 p-4">
+      <div className="bg-surface-900/80 backdrop-blur-xl border-b border-white/5 p-4 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="bg-red-500 w-3 h-3 rounded-full animate-pulse"></div>
-            <span className="text-white font-medium">Interview in Progress</span>
-            <div className="text-gray-400 text-sm">
-              Question {currentQuestion} of {config.questionCount}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-white font-medium text-sm">Interview in Progress</span>
+            </div>
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-lg bg-white/5 border border-white/10">
+              <span className="text-surface-500 text-xs">Question</span>
+              <span className="text-white font-semibold text-sm">{currentQuestion}/{config.questionCount}</span>
             </div>
           </div>
           
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center text-gray-400">
-              <Clock className="w-4 h-4 mr-2" />
-              {formatTime(timeElapsed)}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-surface-400 text-sm">
+              <Clock className="w-4 h-4" />
+              <span className="font-mono">{formatTime(timeElapsed)}</span>
             </div>
-            <Button onClick={() => navigate('/dashboard')} variant="outline" size="sm">
-              Exit
+            <Button onClick={endInterview} variant="outline" size="sm" className="!border-red-500/20 !text-red-400 hover:!bg-red-500/10">
+              <LogOut className="w-3.5 h-3.5" />
+              End Interview
             </Button>
+          </div>
+        </div>
+        {/* Progress bar */}
+        <div className="max-w-7xl mx-auto mt-3">
+          <div className="w-full bg-white/5 rounded-full h-1">
+            <motion.div
+              className="h-full rounded-full bg-gradient-to-r from-brand-500 to-brand-400"
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.5 }}
+            />
           </div>
         </div>
       </div>
 
       <div className="flex-1 flex">
         {/* Video Section */}
-        <div className="flex-1 bg-gray-900 p-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[60vh]">
+        <div className="flex-1 p-4 md:p-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-200px)]">
             {/* User Video */}
-            <div className="relative bg-gray-800 rounded-xl overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/20 z-10" />
+            <div className="relative rounded-2xl overflow-hidden glass-card">
               {isVideoOn ? (
-                <div className="w-full h-full bg-gray-700 flex items-center justify-center">
+                <div className="w-full h-full bg-surface-900 flex items-center justify-center">
                   <video 
                     ref={videoRef} 
                     autoPlay 
@@ -281,38 +348,66 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
                   />
                 </div>
               ) : (
-                <div className="w-full h-full bg-gray-700 flex items-center justify-center">
-                  <VideoOff className="w-12 h-12 text-gray-500" />
+                <div className="w-full h-full bg-surface-900/50 flex flex-col items-center justify-center gap-3">
+                  <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center">
+                    <VideoOff className="w-8 h-8 text-surface-600" />
+                  </div>
+                  <span className="text-surface-600 text-sm">Camera is off</span>
                 </div>
               )}
               
               <div className="absolute bottom-4 left-4 z-20">
-                <span className="bg-black/50 px-3 py-1 rounded-full text-white text-sm">You</span>
+                <span className="bg-surface-900/80 backdrop-blur-sm px-3 py-1.5 rounded-lg text-white text-xs font-medium border border-white/10">
+                  You
+                </span>
               </div>
+
+              {isRecording && (
+                <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-red-500/20 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-red-500/30">
+                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-red-400 text-xs font-medium">Recording</span>
+                </div>
+              )}
             </div>
 
             {/* AI Interviewer */}
-            <div className="relative bg-gray-800 rounded-xl overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/20 z-10" />
-              <div className="w-full h-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center">
-                <div className={`text-6xl transition-all duration-500 ${
-                  isAiSpeaking ? 'scale-110 animate-pulse' : 'scale-100'
-                }`}>
-                  🤖
+            <div className="relative rounded-2xl overflow-hidden glass-card">
+              <div className="w-full h-full bg-gradient-to-br from-brand-600/20 via-surface-900 to-brand-800/20 flex items-center justify-center">
+                <div className={`relative transition-all duration-500 ${isAiSpeaking ? 'scale-110' : 'scale-100'}`}>
+                  {/* Animated rings */}
+                  {isAiSpeaking && (
+                    <>
+                      <div className="absolute inset-[-20px] border-2 border-brand-400/20 rounded-full animate-ping" />
+                      <div className="absolute inset-[-40px] border border-brand-400/10 rounded-full animate-ping" style={{ animationDelay: '0.5s' }} />
+                    </>
+                  )}
+                  <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center shadow-2xl shadow-brand-500/20">
+                    <span className="text-4xl">🤖</span>
+                  </div>
                 </div>
-                {isAiSpeaking && (
-                  <div className="absolute inset-0 border-4 border-blue-400 rounded-xl animate-ping" />
+                
+                {/* Repeat Audio Button */}
+                {!isAiSpeaking && roundId && (
+                  <motion.button
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    onClick={() => playAudio(roundId)}
+                    className="absolute top-4 right-4 z-30 p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors backdrop-blur-sm border border-white/10"
+                    title="Repeat Question"
+                  >
+                    <MessageSquare className="w-5 h-5" />
+                  </motion.button>
                 )}
               </div>
               
               <div className="absolute bottom-4 left-4 z-20">
-                <span className="bg-black/50 px-3 py-1 rounded-full text-white text-sm flex items-center">
+                <span className="bg-surface-900/80 backdrop-blur-sm px-3 py-1.5 rounded-lg text-white text-xs font-medium border border-white/10 flex items-center gap-2">
                   AI Interviewer
                   {isAiSpeaking && (
-                    <div className="ml-2 flex space-x-1">
-                      <div className="w-2 h-2 bg-green-400 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                      <div className="w-2 h-2 bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                    <div className="flex gap-0.5">
+                      <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" />
+                      <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                      <div className="w-1 h-3 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
                     </div>
                   )}
                 </span>
@@ -321,35 +416,38 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
           </div>
 
           {/* Controls */}
-          <div className="flex justify-center mt-6 space-x-4">
-            <button
+          <div className="flex justify-center mt-6 gap-3">
+            <motion.button
+              whileTap={{ scale: 0.95 }}
               onClick={toggleRecording}
               disabled={loading || isAiSpeaking}
-              className={`p-4 rounded-full transition-colors ${
+              className={`p-4 rounded-2xl transition-all duration-300 ${
                 isRecording
-                  ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.5)]'
-                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-              } disabled:opacity-50`}
+                  ? 'bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse-glow'
+                  : 'bg-white/5 border border-white/10 text-surface-400 hover:bg-white/10 hover:text-white hover:border-white/20'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
               title={isRecording ? "Stop Recording & Submit" : "Start Recording"}
             >
               {isRecording ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
-            </button>
+            </motion.button>
             
-            <button
+            <motion.button
+              whileTap={{ scale: 0.95 }}
               onClick={() => setIsVideoOn(!isVideoOn)}
-              className={`p-4 rounded-full transition-colors ${
+              className={`p-4 rounded-2xl transition-all duration-300 ${
                 isVideoOn
-                  ? 'bg-blue-500 hover:bg-blue-600 text-white'
-                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                  ? 'bg-brand-500 text-white shadow-lg shadow-brand-500/30'
+                  : 'bg-white/5 border border-white/10 text-surface-400 hover:bg-white/10 hover:text-white hover:border-white/20'
               }`}
             >
               {isVideoOn ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
-            </button>
+            </motion.button>
             
             <Button
               onClick={handleNextQuestion}
               variant="primary"
-              disabled={loading || isRecording}
+              disabled={loading || isRecording || isAiSpeaking}
+              size="lg"
             >
               {currentQuestion >= config.questionCount ? 'Complete Interview' : 'Next Question'}
             </Button>
@@ -357,49 +455,68 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
         </div>
 
         {/* Transcript Panel */}
-        <div className="w-96 bg-gray-800 border-l border-gray-700 flex flex-col">
-          <div className="p-4 border-b border-gray-700">
-            <h3 className="text-white font-semibold flex items-center">
-              <MessageSquare className="w-5 h-5 mr-2" />
+        <div className="w-80 lg:w-96 bg-surface-900/50 backdrop-blur-xl border-l border-white/5 flex flex-col hidden md:flex">
+          <div className="p-4 border-b border-white/5">
+            <h3 className="text-white font-semibold flex items-center gap-2 text-sm">
+              <MessageSquare className="w-4 h-4 text-brand-400" />
               Live Transcript
             </h3>
           </div>
           
-          <div className="flex-1 p-4 overflow-y-auto space-y-4">
-            {transcript.map((message, index) => (
-              <div
-                key={index}
-                className={`p-3 rounded-lg ${
-                  message.speaker === 'AI'
-                    ? 'bg-blue-500/20 border-l-4 border-blue-500'
-                    : 'bg-gray-700 border-l-4 border-green-500'
-                }`}
-              >
-                <div className="text-xs text-gray-400 mb-1">{message.speaker}</div>
-                <div className="text-white text-sm">{message.message || (loading && message.speaker === 'You' ? 'Processing...' : '')}</div>
-              </div>
-            ))}
+          <div className="flex-1 p-4 overflow-y-auto space-y-3">
+            <AnimatePresence>
+              {transcript.map((message, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`p-3 rounded-xl text-sm ${
+                    message.speaker === 'AI'
+                      ? 'bg-brand-500/10 border border-brand-500/20'
+                      : 'bg-white/5 border border-white/10'
+                  }`}
+                >
+                  <div className={`text-xs mb-1.5 font-medium ${
+                    message.speaker === 'AI' ? 'text-brand-400' : 'text-surface-500'
+                  }`}>
+                    {message.speaker === 'AI' ? '🤖 AI Interviewer' : '👤 You'}
+                  </div>
+                  <div className="text-surface-300 leading-relaxed">
+                    {message.message || (loading && message.speaker === 'You' ? 'Processing...' : '')}
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
             
             {loading && !isRecording && (
-               <div className="text-center text-gray-500 text-sm italic">Loading...</div>
+              <div className="flex items-center justify-center gap-2 py-4">
+                <div className="w-5 h-5 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
+                <span className="text-surface-500 text-xs">Processing...</span>
+              </div>
             )}
             
             {isAiSpeaking && (
-              <div className="p-3 rounded-lg bg-blue-500/20 border-l-4 border-blue-500">
-                <div className="text-xs text-gray-400 mb-1">AI</div>
-                <div className="text-white text-sm flex items-center">
-                  <span>Speaking...</span>
-                  <div className="ml-2 flex space-x-1">
-                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" />
-                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-3 rounded-xl bg-brand-500/10 border border-brand-500/20"
+              >
+                <div className="text-xs text-brand-400 mb-1.5 font-medium">🤖 AI Interviewer</div>
+                <div className="text-surface-300 text-sm flex items-center gap-2">
+                  <span>Speaking</span>
+                  <div className="flex gap-0.5">
+                    <div className="w-1 h-2 bg-brand-400 rounded-full animate-bounce" />
+                    <div className="w-1 h-2 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                    <div className="w-1 h-2 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
                   </div>
                 </div>
-              </div>
+              </motion.div>
             )}
+            <div ref={transcriptEndRef} />
           </div>
         </div>
       </div>
+      <audio ref={audioRef} className="hidden" />
     </div>
   );
 };

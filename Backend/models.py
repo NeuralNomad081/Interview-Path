@@ -32,7 +32,7 @@ class User(Base):
     clerk_id = Column(String, unique=True, index=True, nullable=True)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     sessions = relationship("InterviewSession", back_populates="user")
 
@@ -42,11 +42,13 @@ class InterviewSession(Base):
 
     id = Column(UUIDType, primary_key=True, default=uuid.uuid4)
     user_id = Column(UUIDType, ForeignKey("users.id"))
-    session_date = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    session_date = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    end_date = Column(DateTime, nullable=True)
+    role = Column(String, default="General")
     report = Column(String)
 
     user = relationship("User", back_populates="sessions")
-    rounds = relationship("InterviewRound", back_populates="session")
+    rounds = relationship("InterviewRound", back_populates="session", cascade="all, delete-orphan")
 
 
 class InterviewRound(Base):

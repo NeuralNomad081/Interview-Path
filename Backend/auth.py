@@ -6,7 +6,13 @@ CLERK_SECRET_KEY = os.environ.get("CLERK_SECRET_KEY")
 clerk = Clerk(bearer_auth=CLERK_SECRET_KEY)
 JWKS_URL = "https://api.clerk.com/v1/jwks"
 
-jwks_client = jwt.PyJWKClient(JWKS_URL, headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"})
+jwks_client = jwt.PyJWKClient(
+    JWKS_URL, 
+    headers={
+        "Authorization": f"Bearer {CLERK_SECRET_KEY}",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+)
 
 def decode_access_token(token: str) -> str | None:
     """Decodes a Clerk JWT and returns the subject (clerk_user_id), or None if invalid/expired."""

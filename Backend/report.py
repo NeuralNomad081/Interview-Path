@@ -81,6 +81,9 @@ def generate_report(session_id: str, db: Session):
         
         # Save string payload to db just in case
         session.report = json.dumps(data)
+        if not session.end_date:
+            from datetime import datetime, timezone
+            session.end_date = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
         return data
         
