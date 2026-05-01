@@ -90,6 +90,26 @@ npm run dev
 ```
 Navigate to your local frontend view (usually `http://localhost:5173` or as indicated in your terminal console).
 
+## 🌐 Deployment
+
+### Frontend (Vercel)
+The frontend is pre-configured for one-click deployment on Vercel. 
+1. Push this repository to GitHub.
+2. Connect your repository to [Vercel](https://vercel.com).
+3. Set the **Root Directory** to `Frontend` (or use the root `vercel.json` provided).
+4. Add the following Environment Variables:
+   - `VITE_API_URL`: Your deployed backend URL.
+   - `VITE_CLERK_PUBLISHABLE_KEY`: From your Clerk Dashboard.
+
+### Backend (Docker / Render / Railway)
+Since the backend uses heavy AI models (`deepface`, `whisper`), it is best deployed using the provided `Dockerfile`.
+1. Deploy to a service like **Render**, **Railway**, or **DigitalOcean**.
+2. Set the following Environment Variables:
+   - `GEMINI_API_KEY`: Your Google Gemini key.
+   - `DATABASE_URL`: Your PostgreSQL/Supabase connection string.
+   - `SUPABASE_URL` & `SUPABASE_KEY`: For media storage.
+   - `CLERK_SECRET_KEY`: For authentication.
+
 ## 📄 License & Usage
 
 This project is built for demonstration, practice, and research purposes, highlighting an integration of local multimodal AI models (Whisper, deepface) communicating alongside cloud-based LLM logic (Google Gemini).

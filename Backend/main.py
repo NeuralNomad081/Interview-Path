@@ -37,9 +37,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 models.Base.metadata.create_all(bind=database.engine)
 
-os.makedirs("audio", exist_ok=True)
-os.makedirs("video", exist_ok=True)
-os.makedirs("frames", exist_ok=True)
+# Use /tmp for all local file operations in cloud environments (like Vercel)
+TEMP_BASE = "/tmp" if os.environ.get("VERCEL") or os.environ.get("PRODUCTION") else os.getcwd()
+AUDIO_DIR = os.path.join(TEMP_BASE, "audio")
+VIDEO_DIR = os.path.join(TEMP_BASE, "video")
+FRAMES_DIR = os.path.join(TEMP_BASE, "frames")
+
+os.makedirs(AUDIO_DIR, exist_ok=True)
+os.makedirs(VIDEO_DIR, exist_ok=True)
+os.makedirs(FRAMES_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # App
@@ -47,12 +53,14 @@ os.makedirs("frames", exist_ok=True)
 app = FastAPI(
     title="Interview-Path API",
     description="The backend for the Interview-Path application.",
-    version="0.2.0",
+    version="1.0.0",
 )
 
+# CORS configuration
+allowed_origins = os.environ.get("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -141,7 +149,7 @@ def start_interview_session(
     question_text = result["question"]
     expected_answer = result["expected_answer"]
 
-    audio_file_path = f"audio/{uuid.uuid4()}.mp3"
+    audio_file_path = os.path.join(AUDIO_DIR, f"{uuid.uuid4()}.mp3")
     saved_audio_path = tts.text_to_speech(question_text, audio_file_path)
 
     new_round = models.InterviewRound(
@@ -216,7 +224,7 @@ def generate_next_question(
     question_text = result["question"]
     expected_answer = result["expected_answer"]
 
-    audio_file_path = f"audio/{uuid.uuid4()}.mp3"
+    audio_file_path = os.path.join(AUDIO_DIR, f"{uuid.uuid4()}.mp3")
     saved_audio_path = tts.text_to_speech(question_text, audio_file_path)
 
     new_round = models.InterviewRound(
@@ -249,7 +257,7 @@ async def answer_question_audio(
         raise HTTPException(status_code=404, detail="Interview round not found")
 
     # Save audio blob (browser sends webm/ogg which Whisper can handle)
-    audio_file_path = f"audio/{uuid.uuid4()}.webm"
+    audio_file_path = os.path.join(AUDIO_DIR, f"{uuid.uuid4()}.webm")
     contents = await audio_file.read()
     with open(audio_file_path, "wb") as buffer:
         buffer.write(contents)
@@ -281,7 +289,7 @@ def answer_question_video(
     if not interview_round:
         raise HTTPException(status_code=404, detail="Interview round not found")
 
-    video_file_path = f"video/{uuid.uuid4()}.webm"
+    video_file_path = os.path.join(VIDEO_DIR, f"{uuid.uuid4()}.webm")
     contents = video_file.file.read()
     with open(video_file_path, "wb") as buffer:
         buffer.write(contents)

@@ -1,0 +1,8 @@
+{
+  "name": "interview-path-monorepo",
+  "private": true,
+  "workspaces": [
+    "Frontend",
+    "Backend"
+  ]
+}
