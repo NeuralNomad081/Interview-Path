@@ -20,7 +20,7 @@
 | Domain | Technologies Used |
 | :--- | :--- |
 | **Frontend** | React 18, Vite, TypeScript, Tailwind CSS, Lucide React, react-router-dom |
-| **Backend** | Python, FastAPI, Uvicorn, SQLAlchemy (SQLite), Passlib (bcrypt), JWT |
+| **Backend** | Python, FastAPI, Uvicorn, SQLAlchemy (PostgreSQL/Supabase), Passlib (bcrypt), JWT |
 | **AI Models (Local)**| OpenAI Whisper (Speech-to-Text), DeepFace (Facial Expressions), VADER (Sentiment) |
 | **AI Models (Cloud)**| Google Gemini (`gemini-2.0-flash-lite`) for Interview Generation & Reporting |
 | **Audio Processing** | WebRTC MediaRecorder API (Frontend), pyttsx3 (Backend) |

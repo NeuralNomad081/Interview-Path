@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, VideoOff, Video, MessageSquare, Clock, LogOut } from 'lucide-react';
+import { Mic, MicOff, VideoOff, Video, MessageSquare, Clock, LogOut, Settings, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
@@ -22,6 +22,10 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [roundId, setRoundId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionPhase, setSessionPhase] = useState<'setup' | 'active'>('setup');
+  const [hasMicAccess, setHasMicAccess] = useState(false);
+  const [hasCamAccess, setHasCamAccess] = useState(false);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
   const initializedRef = useRef(false);
 
   // Audio recording refs
@@ -45,6 +49,7 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
 
   // Initialize session
   useEffect(() => {
+    if (sessionPhase !== 'active') return;
     if (initializedRef.current) return;
     initializedRef.current = true;
 
@@ -76,7 +81,7 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
     };
     initSession();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [getToken, config.role]);
+  }, [getToken, config.role, sessionPhase]);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -109,17 +114,26 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
   };
 
   useEffect(() => {
-    if (isVideoOn) {
+    if (isVideoOn || sessionPhase === 'setup') {
       const getStream = async () => {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: sessionPhase === 'setup' ? true : isVideoOn, 
+            audio: true 
+          });
           streamRef.current = stream;
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
           }
-        } catch (err) {
+          setHasCamAccess(stream.getVideoTracks().length > 0);
+          setHasMicAccess(stream.getAudioTracks().length > 0);
+          setDeviceError(null);
+        } catch (err: any) {
           toast.error('Camera/Microphone access denied');
-          setIsVideoOn(false);
+          setHasCamAccess(false);
+          setHasMicAccess(false);
+          setDeviceError(err.message || 'Access denied');
+          if (isVideoOn) setIsVideoOn(false);
         }
       };
       getStream();
@@ -130,11 +144,16 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
       }
     }
     return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
+      // Don't stop streams if we are just transitioning phases and switching video refs
     };
-  }, [isVideoOn]);
+  }, [isVideoOn, sessionPhase]);
+
+  // Re-attach stream when video element refs change (e.g. going from setup to active phase)
+  useEffect(() => {
+    if (videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [sessionPhase]);
 
   const startRecording = async () => {
     try {
@@ -291,6 +310,70 @@ const InterviewSessionPage: React.FC<{onComplete?: () => void}> = ({onComplete})
   };
 
   const progress = (currentQuestion / config.questionCount) * 100;
+
+  if (sessionPhase === 'setup') {
+    return (
+      <div className="min-h-screen bg-surface-950 flex flex-col items-center justify-center p-6">
+        <div className="max-w-2xl w-full bg-surface-900/50 backdrop-blur-xl border border-white/5 rounded-3xl p-8 shadow-2xl">
+          <h1 className="text-3xl font-bold text-white mb-2 text-center">Device Check</h1>
+          <p className="text-surface-400 text-center mb-8">Before we start, let's make sure your camera and microphone are working.</p>
+          
+          <div className="relative aspect-video bg-surface-800 rounded-2xl overflow-hidden mb-6 border border-white/10 flex items-center justify-center">
+            {!deviceError ? (
+              <video 
+                ref={videoRef} 
+                autoPlay 
+                muted 
+                playsInline 
+                className="w-full h-full object-cover transform scale-x-[-1]" 
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center text-red-400">
+                <AlertCircle className="w-12 h-12 mb-4 opacity-50" />
+                <p>{deviceError}</p>
+                <p className="text-sm mt-2 text-surface-400">Please grant permissions to continue.</p>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <div className="flex items-center gap-4 bg-white/5 rounded-2xl p-4">
+              <div className={`p-3 rounded-xl ${hasMicAccess ? 'bg-green-500/20 text-green-400' : 'bg-surface-800 text-surface-400'}`}>
+                {hasMicAccess ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
+              </div>
+              <div>
+                <p className="text-white font-medium">Microphone</p>
+                <p className="text-sm text-surface-400">{hasMicAccess ? 'Working properly' : 'Access needed'}</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-4 bg-white/5 rounded-2xl p-4">
+              <div className={`p-3 rounded-xl ${hasCamAccess ? 'bg-green-500/20 text-green-400' : 'bg-surface-800 text-surface-400'}`}>
+                {hasCamAccess ? <Video className="w-6 h-6" /> : <VideoOff className="w-6 h-6" />}
+              </div>
+              <div>
+                <p className="text-white font-medium">Camera</p>
+                <p className="text-sm text-surface-400">{hasCamAccess ? 'Working properly' : 'Access needed'}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-center gap-4">
+            <Button variant="outline" onClick={() => navigate(-1)}>
+              Cancel
+            </Button>
+            <Button 
+              variant="primary" 
+              disabled={!hasMicAccess || !hasCamAccess}
+              onClick={() => setSessionPhase('active')}
+            >
+              Start Interview
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-surface-950 flex flex-col">

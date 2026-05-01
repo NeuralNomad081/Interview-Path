@@ -314,18 +314,22 @@ def get_question_audio(
 
         import requests
         
-        def stream_url():
-            try:
-                logger.info(f"Proxying audio from URL: {audio_path}")
-                with requests.get(audio_path, stream=True) as r:
-                    r.raise_for_status()
-                    for chunk in r.iter_content(chunk_size=8192):
+        try:
+            logger.info(f"Proxying audio from URL: {audio_path}")
+            r = requests.get(audio_path, stream=True)
+            r.raise_for_status()
+            
+            def stream_url(resp):
+                try:
+                    for chunk in resp.iter_content(chunk_size=8192):
                         yield chunk
-            except Exception as e:
-                logger.error(f"Failed to proxy audio from {audio_path}: {e}")
-                raise HTTPException(status_code=500, detail="Failed to fetch audio from storage")
+                finally:
+                    resp.close()
 
-        return StreamingResponse(stream_url(), media_type="audio/mpeg")
+            return StreamingResponse(stream_url(r), media_type="audio/mpeg")
+        except Exception as e:
+            logger.error(f"Failed to proxy audio from {audio_path}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to fetch audio from storage")
 
     if os.path.exists(audio_path):
         logger.info(f"Serving local audio file: {audio_path}")

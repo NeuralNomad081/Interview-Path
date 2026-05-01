@@ -208,3 +208,7 @@ __marimo__/
 .env.*
 .DS_Store
 
+backend/audio
+backend/video
+backend/frames
+
